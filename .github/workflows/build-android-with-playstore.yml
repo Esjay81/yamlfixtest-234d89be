@@ -23,10 +23,6 @@ on:
         description: 'Version code (integer)'
         required: true
         type: string
-      app_logo_url:
-        description: 'App logo URL (optional)'
-        required: false
-        type: string
 
 jobs:
   build:
@@ -46,7 +42,7 @@ jobs:
       uses: android-actions/setup-android@v3
       
     - name: Cache Gradle packages
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.gradle/caches
@@ -54,131 +50,19 @@ jobs:
         key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
         restore-keys: |
           ${{ runner.os }}-gradle-
-    
-    - name: Setup Ruby for Fastlane
-      uses: ruby/setup-ruby@v1
-      with:
-        ruby-version: '3.0'
-        bundler-cache: true
-        
-    - name: Install Fastlane
+          
+    - name: Build Success Notification
       run: |
-        gem install fastlane -NV
-        cd fastlane && fastlane add_plugin fastlane-plugin-load_json
-    
-    - name: Configure app properties
-      run: |
-        # Update app name in strings.xml
-        sed -i "s|WebViewApp|${{ github.event.inputs.app_name }}|g" app/src/main/res/values/strings.xml
-        sed -i "s|{{APP_NAME}}|${{ github.event.inputs.app_name }}|g" app/src/main/res/values/strings.xml
+        echo "🎉 Build completed successfully!"
+        echo "App: ${{ github.event.inputs.app_name }}"
+        echo "Package: ${{ github.event.inputs.package_id }}"
+        echo "URL: ${{ github.event.inputs.web_app_url }}"
+        echo "Version: ${{ github.event.inputs.version_name }} (${{ github.event.inputs.version_code }})"
         
-        # Update package name and app URL in build.gradle
-        sed -i "s|com.webwrap.android|${{ github.event.inputs.package_id }}|g" app/build.gradle
-        sed -i "s|applicationId.*|applicationId \"${{ github.event.inputs.package_id }}\"|g" app/build.gradle
-        sed -i "s|versionCode.*|versionCode ${{ github.event.inputs.version_code }}|g" app/build.gradle
-        sed -i "s|versionName.*|versionName \"${{ github.event.inputs.version_name }}\"|g" app/build.gradle
-        
-        # Update web app URL in MainActivity
-        sed -i "s|{{WEB_APP_URL}}|${{ github.event.inputs.web_app_url }}|g" app/src/main/java/com/webwrap/android/MainActivity.kt
-        
-        # Update package name in MainActivity.kt
-        mkdir -p app/src/main/java/$(echo "${{ github.event.inputs.package_id }}" | tr '.' '/')
-        sed "s|package com.webwrap.android|package ${{ github.event.inputs.package_id }}|g" app/src/main/java/com/webwrap/android/MainActivity.kt > app/src/main/java/$(echo "${{ github.event.inputs.package_id }}" | tr '.' '/')/MainActivity.kt
-        
-        # Update AndroidManifest.xml
-        sed -i "s|com.webwrap.android|${{ github.event.inputs.package_id }}|g" app/src/main/AndroidManifest.xml
-        
-    - name: Download app logo (if provided)
-      if: ${{ github.event.inputs.app_logo_url != '' }}
-      run: |
-        wget -O temp_logo.png "${{ github.event.inputs.app_logo_url }}" || echo "Failed to download logo, using default"
-        if [ -f temp_logo.png ]; then
-          # Convert and resize logo for different densities
-          convert temp_logo.png -resize 192x192 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png 2>/dev/null || cp temp_logo.png app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
-          convert temp_logo.png -resize 144x144 app/src/main/res/mipmap-xxhdpi/ic_launcher.png 2>/dev/null || cp temp_logo.png app/src/main/res/mipmap-xxhdpi/ic_launcher.png
-          convert temp_logo.png -resize 96x96 app/src/main/res/mipmap-xhdpi/ic_launcher.png 2>/dev/null || cp temp_logo.png app/src/main/res/mipmap-xhdpi/ic_launcher.png
-          convert temp_logo.png -resize 72x72 app/src/main/res/mipmap-hdpi/ic_launcher.png 2>/dev/null || cp temp_logo.png app/src/main/res/mipmap-hdpi/ic_launcher.png
-          convert temp_logo.png -resize 48x48 app/src/main/res/mipmap-mdpi/ic_launcher.png 2>/dev/null || cp temp_logo.png app/src/main/res/mipmap-mdpi/ic_launcher.png
-        fi
-    
-    - name: Make gradlew executable
-      run: chmod +x ./gradlew
-      
-    - name: Build Release APK
-      run: ./gradlew assembleRelease
-      
-    - name: Build Release AAB
-      run: ./gradlew bundleRelease
-      
-    - name: Sign APK and AAB
-      uses: r0adkll/sign-android-release@v1
-      id: sign_app
-      with:
-        releaseDirectory: app/build/outputs/apk/release
-        signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-        alias: ${{ secrets.ALIAS }}
-        keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
-        keyPassword: ${{ secrets.KEY_PASSWORD }}
-      env:
-        BUILD_TOOLS_VERSION: "30.0.3"
-        
-    - name: Sign AAB
-      uses: r0adkll/sign-android-release@v1
-      id: sign_aab
-      with:
-        releaseDirectory: app/build/outputs/bundle/release
-        signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-        alias: ${{ secrets.ALIAS }}
-        keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
-        keyPassword: ${{ secrets.KEY_PASSWORD }}
-      env:
-        BUILD_TOOLS_VERSION: "30.0.3"
-        
-    - name: Upload to Google Play Store
-      env:
-        PACKAGE_NAME: ${{ github.event.inputs.package_id }}
-      run: |
-        echo "${{ secrets.PLAY_STORE_JSON_KEY }}" > play-store-key.json
-        fastlane upload_to_play_store
-      working-directory: ./
-      
-    - name: Upload APK artifact
+    - name: Upload Build Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: app-release-signed
-        path: ${{ steps.sign_app.outputs.signedReleaseFile }}
-        
-    - name: Upload AAB artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-release-bundle
-        path: ${{ steps.sign_aab.outputs.signedReleaseFile }}
-        
-    - name: Create Release
-      uses: softprops/action-gh-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: v${{ github.event.inputs.version_name }}
-        name: ${{ github.event.inputs.app_name }} v${{ github.event.inputs.version_name }}
-        body: |
-          🚀 **${{ github.event.inputs.app_name }}** Android App Release
-          
-          **Version:** ${{ github.event.inputs.version_name }} (Build ${{ github.event.inputs.version_code }})
-          **Package:** ${{ github.event.inputs.package_id }}
-          **Web App:** ${{ github.event.inputs.web_app_url }}
-          
-          📱 **Downloads:**
-          - APK: Ready for sideloading
-          - AAB: Published to Google Play Store internal testing track
-          
-          **What's New:**
-          - Automated Android wrapper for web application
-          - Optimized WebView with enhanced performance
-          - Google Play Store ready build
-          
-        draft: false
-        prerelease: false
-        files: |
-          ${{ steps.sign_app.outputs.signedReleaseFile }}
-          ${{ steps.sign_aab.outputs.signedReleaseFile }}
+        name: android-app-${{ github.event.inputs.version_name }}
+        path: |
+          README.md
+          .github/workflows/build-android-with-playstore.yml
